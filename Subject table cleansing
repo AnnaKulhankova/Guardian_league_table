@@ -1,0 +1,110 @@
+--creating table with no duplicates
+CREATE TABLE SUBJECT_DISTINCT AS
+SELECT DISTINCT * 
+FROM "billigence-original-dataset-subjects";
+
+--checking institution titles --> looking for ones with low reocurrence (those may be misspelled/invalid/a variation of more frequent title)
+SELECT 
+    "Institution"
+    , COUNT(*)
+FROM SUBJECT_DISTINCT
+GROUP BY "Institution"
+HAVING COUNT(*) < 11
+ORDER BY COUNT(*);
+
+--creating table with no empty strings / no rows without ranking or institution title / unified(/right) institution titles
+CREATE OR REPLACE TABLE SUBJECT_NO_EMPTY_STRINGS AS
+SELECT
+    "Subject_Area_Year"
+    ,"Subject_Area"
+    ,CASE 
+        WHEN "Subject_Area_Rank" <> '' THEN "Subject_Area_Rank"
+        ELSE NULL
+     END AS "Subject_Area_Rank"
+    ,CASE 
+        WHEN "Subject_Area_Rank_Change" <> '' THEN "Subject_Area_Rank_Change"
+        ELSE NULL
+     END AS "Subject_Area_Rank_Change"
+    ,CASE
+        WHEN "Institution" = 'Arts UC, Bournemouth' THEN 'Arts University Bournemouth'
+        WHEN "Institution" = 'Bishop Grosseteste UC' THEN 'Bishop Grosseteste'
+        WHEN "Institution" = 'Central School of Speech and Drama' THEN 'Royal Central School of Speech & Drama'
+        WHEN "Institution" = 'Norwich UC of the Arts' THEN 'Norwich University of the Arts'
+        WHEN "Institution" = 'Marjon (St Mark and St John)' THEN 'St Mark and St John'
+        WHEN "Institution" = 'St George\'s Medical School' THEN 'St George\'s, UoL'
+        WHEN "Institution" = 'Scottish Agricultural College' THEN 'SRUC'
+        WHEN "Institution" = 'Harper Adams UC' THEN 'Harper Adams'
+        WHEN "Institution" = 'Royal Agricultural College' THEN 'Royal Agricultural University'
+        WHEN "Institution" = 'Arts UC, Bournemouth' THEN 'Arts University Bournemouth'
+        WHEN "Institution" = 'St George\'s, UoL' THEN 'Kingston - St George\'s University'
+        WHEN "Institution" = 'UC Falmouth' THEN 'Falmouth'
+        WHEN "Institution" = 'UC Suffolk' THEN 'Suffolk'
+    ELSE "Institution"
+    END AS "Institution"
+    ,CASE
+        WHEN "Guardian_score100" <> '' THEN "Guardian_score100"
+        ELSE NULL
+     END AS "Guardian_score100"
+    ,CASE
+        WHEN "Satisfied_with_Teaching" <> '' THEN "Satisfied_with_Teaching"
+        ELSE NULL
+     END AS "Satisfied_with_Teaching"
+    ,CASE
+        WHEN "Satisfied_overall_with_course" <> '' THEN "Satisfied_overall_with_course"
+        ELSE NULL
+     END AS "Satisfied_overall_with_course"
+    ,CASE
+        WHEN "Expenditure_per_student_FTE" <> '' THEN "Expenditure_per_student_FTE"
+        ELSE NULL
+     END AS "Expenditure_per_student_FTE"
+    ,CASE
+        WHEN "Studentstaff_ratio" <> '' THEN "Studentstaff_ratio"
+        ELSE NULL
+     END AS "Studentstaff_ratio"
+     ,CASE
+        WHEN "Career_prospects" <> '' THEN "Career_prospects"
+        ELSE NULL
+     END AS "Career_prospects"
+    ,CASE
+        WHEN "Value_added_score10" <> '' THEN "Value_added_score10"
+        ELSE NULL
+     END AS "Value_added_score10"
+    ,CASE
+        WHEN "Average_Entry_Tariff" <> '' THEN "Average_Entry_Tariff"
+        ELSE NULL
+     END AS "Average_Entry_Tariff"
+    ,CASE
+        WHEN "Satisfied_with_Assessment" <> '' THEN "Satisfied_with_Assessment"
+        ELSE NULL
+     END AS "Satisfied_with_Assessment"
+FROM SUBJECT_DISTINCT
+WHERE "Subject_Area_Rank" <> '' AND "Institution" <> '';
+
+--doublechecking for duplicates after renaming institutions
+SELECT 
+    "Subject_Area_Year"
+    ,"Subject_Area"
+    ,"Institution"
+    ,COUNT(*)
+FROM SUBJECT_NO_EMPTY_STRINGS
+GROUP BY 1, 2, 3
+HAVING COUNT(*) > 1
+ORDER BY 1, 2, 3;
+
+--casting datatypes accordingly
+CREATE OR REPLACE TABLE SUBJECT_FINAL AS 
+SELECT 
+    CAST("Subject_Area_Year"||'01-01' AS DATE) AS "Year"
+    ,"Subject_Area"
+    ,"Subject_Area_Rank"::INT AS "Subject_Area_Rank"
+    ,"Subject_Area_Rank_Change"::INT AS "Subject_Area_Rank_Change"
+    ,REPLACE("Guardian_score100", ',', '.')::FLOAT AS "Guardian_score100"
+    ,"Satisfied_with_Teaching"::INT AS "Satisfied_with_Teaching"
+    ,"Satisfied_overall_with_course"::INT AS "Satisfied_overall_with_course"
+    ,"Expenditure_per_student_FTE"::INT AS "Expenditure_per_student_FTE"
+    ,REPLACE("Studentstaff_ratio", ',', '.')::FLOAT AS "Studentstaff_ratio"
+     ,"Career_prospects"::INT AS "Career_prospects"
+    ,"Value_added_score10"::INT AS "Value_added_score10"
+    ,"Average_Entry_Tariff"::INT AS "Average_Entry_Tariff"
+    ,"Satisfied_with_Assessment"::INT AS "Satisfied_with_Assessment"
+FROM SUBJECT_NO_EMPTY_STRINGS;
