@@ -1,0 +1,160 @@
+--creating table from larger dataset with no duplicates
+CREATE TABLE GUARDIAN_DISTINCT AS
+SELECT DISTINCT * 
+FROM "guardian-data-cov-guardian-dirty";
+
+--checking institution titles and looking for titles with low reocurrence (probable spelling mistakes / title variations)
+SELECT 
+    "Institution"
+    , COUNT(*)
+FROM GUARDIAN_DISTINCT
+GROUP BY "Institution"
+ORDER BY COUNT(*);
+
+--creating table with no empty strings / no rows without ranking or institution title / unified(/right) institution titles
+CREATE OR REPLACE TABLE GUARDIAN_NO_EMPTY_STRINGS AS 
+SELECT 
+    "Publish_Date_Overall"
+    ,"Ranking_Year"
+    ,"Ranking"
+    ,CASE
+        WHEN "Ranking_Prev" <> '' THEN "Ranking_Prev"
+        ELSE NULL
+        END AS "Ranking_Prev"
+    ,CASE
+        WHEN "Ranking_Change" <> '' THEN "Ranking_Change"
+        ELSE NULL
+      END AS "Ranking_Change"
+    ,CASE
+        WHEN "Institution" = 'Uni of the Arts London' THEN 'University of the Arts London'
+        WHEN "Institution" = 'Thames Valley' THEN 'West London'
+        WHEN "Institution" = 'Bucks New Uni' THEN 'Bucks New University'
+        WHEN "Institution" = 'Ulstery' THEN 'Ulster'
+        WHEN "Institution" = 'Soas' THEN 'SOAS'
+        WHEN "Institution" = 'Glasgoq' THEN 'Glasgow'
+        WHEN "Institution" = 'St Mary\'s' THEN 'St Mary\'s, Twickenham'
+        WHEN "Institution" = 'Queen\'s' THEN 'Queen\'s, Belfast'
+        WHEN "Institution" = 'University Campus Suffolk' THEN 'Suffolk'
+        WHEN "Institution" = 'Abertay Dundee' THEN 'Abertay'
+    ELSE "Institution"
+    END AS "Institution"
+    ,"Guardian_score_100"
+    ,CASE
+        WHEN "NSS_Teaching" <> '' THEN "NSS_Teaching"
+        ELSE NULL
+      END AS "NSS_Teaching"
+    ,CASE
+        WHEN "NSS_Overall" <> '' THEN "NSS_Overall"
+        ELSE NULL
+      END AS "NSS_Overall"
+    ,CASE
+        WHEN "Expenditure_per_student_10" <> '' THEN "Expenditure_per_student_10"
+        ELSE NULL
+      END AS "Expenditure_per_student_10"
+    ,CASE
+        WHEN "Student_staff_ratio" <> '' THEN "Student_staff_ratio"
+        ELSE NULL
+      END AS "Student_staff_ratio"
+    ,"Career_prospects"::FLOAT AS "Career_prospects"
+    ,CASE
+        WHEN "Value_added_score_10" <> '' THEN "Value_added_score_10"
+        ELSE NULL
+      END AS "Value_added_score_10"
+    ,CASE
+        WHEN "Entry_Tariff" <> '' THEN "Entry_Tariff"
+        ELSE NULL
+      END AS "Entry_Tariff"
+FROM GUARDIAN_DISTINCT
+WHERE "Ranking" <> '' AND "Institution" <> '';
+
+--casting datatypes accordingly
+CREATE OR REPLACE TABLE GUARDIAN_DATATYPE_EDIT AS 
+SELECT 
+    "Ranking_Year"
+    ,"Ranking"::INT AS "Ranking"
+    ,"Ranking_Prev"::INT AS "Ranking_Prev"
+    ,("Ranking_Change" * 1)::INT AS "Ranking_Change"
+    ,"Institution"
+    ,"Guardian_score_100"::FLOAT AS "Guardian_score_100"
+    ,"NSS_Teaching"::FLOAT AS "NSS_Teaching"
+    ,"NSS_Overall"::FLOAT AS "NSS_Overall"
+    ,"Expenditure_per_student_10"::FLOAT AS "Expenditure_per_student_10"
+    ,"Student_staff_ratio"::FLOAT AS "Student_staff_ratio"
+    ,"Career_prospects"::FLOAT AS "Career_prospects"
+    ,"Value_added_score_10"::FLOAT AS "Value_added_score_10"
+    ,"Entry_Tariff"::FLOAT AS "Entry_Tariff"
+FROM GUARDIAN_NO_EMPTY_STRINGS;
+
+---------------------------------------------
+--BILLIGENCE DATASET OBSERVATION + PREPARATION FOR COMPARISON
+----------------------------------------------
+--checking for duplicates
+SELECT COUNT(*) = (SELECT COUNT(DISTINCT "Ranking_Year"||"Institution") FROM "billigence-original-dataset-main-table") FROM "billigence-original-dataset-main-table";
+
+--Title cleansing and unification with larger dataset --> BL dataset has Newport row that is lacking in larger dataset, Newport was a Uni in Wales that no longer exists
+SELECT 
+    BL."Institution" AS BL
+    ,GC."Institution" AS GC
+    ,COUNT(*)
+FROM "billigence-original-dataset-main-table" AS BL
+FULL OUTER JOIN GUARDIAN_DATATYPE_EDIT AS GC
+ON BL."Institution" = GC."Institution"
+GROUP BY 1, 2
+HAVING BL IS NULL OR GC IS NULL
+ORDER BY 1;
+
+UPDATE "billigence-original-dataset-main-table" SET
+"Institution" = (
+    CASE
+        WHEN "Institution" = 'Abertay Dundee' THEN 'Abertay'
+        WHEN "Institution" = 'Leeds Met' THEN 'Leeds Beckett' --formerly leeds metropolitan
+        WHEN "Institution" = 'Newman University College' THEN 'Newman'
+        WHEN "Institution" = 'St Mary\'s UC, Twickenham' THEN 'St Mary\'s, Twickenham'
+        WHEN "Institution" = 'UC Falmouth' THEN 'Falmouth'
+        WHEN "Institution" = 'UC Suffolk' THEN 'Suffolk'
+    ELSE "Institution"
+    END);
+    
+----------------------------
+--COMPARING DATASETS --> result: billigence dataset is a subset of larger dataset and thus larger can be used and trusted
+------------------------------
+CREATE OR REPLACE TEMPORARY TABLE BL_CONCAT AS
+SELECT 
+    "Ranking_Year"||"Institution"||"Ranking" AS BL_ID
+FROM "billigence-original-dataset-main-table" AS BL
+ORDER BY "Ranking_Year", "Institution";
+
+CREATE OR REPLACE TEMPORARY TABLE GC_CONCAT AS
+SELECT 
+    "Ranking_Year"||"Institution"||"Ranking" AS GC_ID
+FROM GUARDIAN_DATATYPE_EDIT
+WHERE "Ranking_Year" BETWEEN 2013 AND 2015
+ORDER BY "Ranking_Year", "Institution";
+
+-- comparison of both datasets upon concatenated columns "Ranking_Year", "Institution" and "Ranking"
+SELECT *
+FROM BL_CONCAT AS BL
+FULL OUTER JOIN GC_CONCAT AS GC
+ON BL.BL_ID = GC.GC_ID
+WHERE GC_ID IS NULL;
+
+--> 29 rows in total do not match 100%, the difference occurs only in columns "NSS_Overall" and "NSS_Teaching" (maybe a result of rounding)
+
+--------------------
+--BLENDING DATASETS --> adding "NSS_Feedback" column from BL dataset
+---------------------
+--getting rid of empty string cell before blending so that right datatype can be cast
+UPDATE "billigence-original-dataset-main-table" SET
+"NSS_Feedback" = NULL
+WHERE "NSS_Feedback" = '';
+
+--creating a final table for visualisation
+CREATE OR REPLACE TABLE GUARDIAN_RANKING_MAIN AS
+SELECT 
+    GC.*
+    ,CAST("Ranking_Year"||'01-01' AS DATE) AS "Year"
+    ,REPLACE(BL."NSS_Feedback", ',', '.')::FLOAT AS "NSS_Feedback"
+FROM GUARDIAN_DATATYPE_EDIT AS GC
+LEFT JOIN "billigence-original-dataset-main-table" AS BL
+ON GC."Ranking_Year" = BL."Ranking_Year" AND GC."Institution" = BL."Institution"
+--WHERE "NSS_Feedback" IS NOT NULL;
